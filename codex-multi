@@ -336,7 +336,7 @@ def copy_entry(src, dst):
 
     if os.path.isdir(dst) and not os.path.islink(dst):
         shutil.rmtree(dst)
-    elif os.path.lexists(dst) and os.path.islink(dst):
+    elif os.path.lexists(dst):
         os.unlink(dst)
     os.makedirs(os.path.dirname(dst), exist_ok=True)
     shutil.copy2(src, dst, follow_symlinks=False)
