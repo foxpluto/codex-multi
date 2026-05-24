@@ -35,3 +35,9 @@
 **Decision:** Added `/api/accounts/export` endpoint to codex-lb (fork). `cm-sync` (private script in dotfiles) calls this API to pull fresh tokens. No SSH/DB/encryption dependencies.
 **Alternatives:** SSH + decrypt SQLite directly (original approach — fragile, breaks on codex-lb config changes), browser automation (overkill), separate OAuth sessions per machine (tedious)
 **Consequences:** Single curl call syncs all accounts. codex-lb is the source of truth for tokens. Private sync script lives in dotfiles, not in public repo.
+
+## [2026-05-24] Context sync between local accounts
+**Context:** Each local account has its own Codex environment under `~/.codex-multi/accounts/<name>/`, so switching accounts can lose recent config, memories, skills, sessions, and SQLite state created while using another account.
+**Decision:** Add `cm sync [--from src] <dst>` and `cm use --sync <dst>`. Sync copies the account context with inline Python and protects account identity files: `auth.json`, `auth.json.*`, and `installation_id`. Before copying, it archives the target account into `~/.codex-multi/backups/context-sync-*.tar.gz`.
+**Alternatives:** Make every `cm use` sync automatically, use `rsync`, or share one common context directory. Automatic sync was too surprising; `rsync` would add a dependency; shared context would change the existing account-isolation model.
+**Consequences:** Account tokens stay isolated while day-to-day Codex context can be propagated explicitly. Sync has delete semantics for unprotected target files, so the target backup is the rollback path.

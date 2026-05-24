@@ -23,10 +23,11 @@ docs/                    # setup guides (WSL SSH Task Scheduler)
     └── <name>/
         ├── auth.json    # OAuth tokens (refresh + access + id)
         └── config.toml  # codex config
+    └── backups/         # context-sync backups
 ~/.codex → ~/.codex-multi/accounts/<default>/  (symlink)
 ```
 
-Key design: `cm use <name>` symlinks `~/.codex` → account dir, so both `codex-multi` and bare `codex` CLI use the same account.
+Key design: `cm use <name>` symlinks `~/.codex` → account dir, so both `codex-multi` and bare `codex` CLI use the same account. `cm sync <name>` copies context from the current default account into another account while preserving login identity files.
 
 ## Commands
 | Command | Description |
@@ -34,7 +35,8 @@ Key design: `cm use <name>` symlinks `~/.codex` → account dir, so both `codex-
 | `add <name>` | OAuth login, save new account (SSH-aware) |
 | `rm <name>` | Remove account |
 | `ls` | List accounts (* = default) |
-| `use <name>` | Set default (symlinks ~/.codex) |
+| `use [--sync] <name>` | Set default (optionally sync context first) |
+| `sync [--from src] <dst>` | Copy context into another account without overwriting auth |
 | `balance` | Switch to account with most remaining quota |
 | `doctor` | Health check: all accounts (+ codex-lb if configured) |
 | `reauth [--lb] <name>` | Re-login, backs up old auth (--lb to import to codex-lb) |

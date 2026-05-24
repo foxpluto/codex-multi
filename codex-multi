@@ -5,6 +5,7 @@
 #   codex-multi rm <name>         — remove an account
 #   codex-multi ls                — list all accounts
 #   codex-multi use <name>        — set default account
+#   codex-multi sync <name>       — copy current account context into another account
 #   codex-multi balance           — switch to account with most quota
 #   codex-multi backup <file>     — archive all accounts/config for transfer
 #   codex-multi restore <file>    — restore all accounts/config from archive
@@ -20,6 +21,7 @@ MULTI_HOME="${CODEX_MULTI_HOME:-$HOME/.codex-multi}"
 ACCOUNTS_DIR="$MULTI_HOME/accounts"
 DEFAULT_FILE="$MULTI_HOME/default"
 CONFIG_FILE="$MULTI_HOME/config"
+SYNC_PROTECTED_PATTERNS="auth.json auth.json.* installation_id"
 
 mkdir -p "$ACCOUNTS_DIR"
 
@@ -29,6 +31,14 @@ dim()   { printf '\033[90m%s\033[0m\n' "$*"; }
 
 get_default() {
   [ -f "$DEFAULT_FILE" ] && cat "$DEFAULT_FILE" || echo ""
+}
+
+require_account() {
+  local name="$1"
+  if [ ! -d "$ACCOUNTS_DIR/$name" ]; then
+    red "Account '$name' not found"
+    exit 1
+  fi
 }
 
 get_config() {
@@ -271,6 +281,151 @@ cmd_restore() {
   fi
 }
 
+cmd_sync_context() {
+  local source="$1"
+  local target="$2"
+  local source_dir="$ACCOUNTS_DIR/$source"
+  local target_dir="$ACCOUNTS_DIR/$target"
+
+  require_account "$source"
+  require_account "$target"
+
+  if [ "$source" = "$target" ]; then
+    red "Source and target account are the same: $source"
+    exit 1
+  fi
+
+  mkdir -p "$MULTI_HOME/backups"
+  local backup="$MULTI_HOME/backups/context-sync-$(date +%Y%m%d-%H%M%S)-$$-$target.tar.gz"
+  tar -czf "$backup" -C "$ACCOUNTS_DIR" "$target"
+  chmod 600 "$backup" 2>/dev/null || true
+
+  python3 - "$source_dir" "$target_dir" "$SYNC_PROTECTED_PATTERNS" <<'PY'
+import fnmatch
+import os
+import shutil
+import sys
+
+source_dir, target_dir, protected_raw = sys.argv[1:4]
+protected_patterns = protected_raw.split()
+
+def is_protected(relpath):
+    parts = relpath.split(os.sep)
+    basename = parts[-1]
+    return any(
+        fnmatch.fnmatch(basename, pattern) or fnmatch.fnmatch(relpath, pattern)
+        for pattern in protected_patterns
+    )
+
+def copy_entry(src, dst):
+    if os.path.islink(src):
+        if os.path.lexists(dst):
+            if os.path.isdir(dst) and not os.path.islink(dst):
+                shutil.rmtree(dst)
+            else:
+                os.unlink(dst)
+        os.symlink(os.readlink(src), dst)
+        return
+
+    if os.path.isdir(src):
+        if os.path.lexists(dst) and not os.path.isdir(dst):
+            os.unlink(dst)
+        os.makedirs(dst, exist_ok=True)
+        shutil.copystat(src, dst, follow_symlinks=False)
+        return
+
+    if os.path.isdir(dst) and not os.path.islink(dst):
+        shutil.rmtree(dst)
+    elif os.path.lexists(dst) and os.path.islink(dst):
+        os.unlink(dst)
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    shutil.copy2(src, dst, follow_symlinks=False)
+
+for root, dirs, files in os.walk(source_dir):
+    relroot = os.path.relpath(root, source_dir)
+    relroot = "" if relroot == "." else relroot
+
+    for dirname in list(dirs):
+        relpath = os.path.join(relroot, dirname) if relroot else dirname
+        if is_protected(relpath):
+            dirs.remove(dirname)
+            continue
+        copy_entry(os.path.join(root, dirname), os.path.join(target_dir, relpath))
+
+    for filename in files:
+        relpath = os.path.join(relroot, filename) if relroot else filename
+        if is_protected(relpath):
+            continue
+        copy_entry(os.path.join(root, filename), os.path.join(target_dir, relpath))
+
+for root, dirs, files in os.walk(target_dir, topdown=False):
+    relroot = os.path.relpath(root, target_dir)
+    relroot = "" if relroot == "." else relroot
+
+    for filename in files:
+        relpath = os.path.join(relroot, filename) if relroot else filename
+        if is_protected(relpath):
+            continue
+        source_path = os.path.join(source_dir, relpath)
+        target_path = os.path.join(target_dir, relpath)
+        if not os.path.lexists(source_path):
+            os.unlink(target_path)
+
+    for dirname in dirs:
+        relpath = os.path.join(relroot, dirname) if relroot else dirname
+        if is_protected(relpath):
+            continue
+        source_path = os.path.join(source_dir, relpath)
+        target_path = os.path.join(target_dir, relpath)
+        if not os.path.lexists(source_path):
+            if os.path.islink(target_path):
+                os.unlink(target_path)
+            else:
+                try:
+                    os.rmdir(target_path)
+                except OSError:
+                    pass
+
+PY
+
+  green "Synced context: $source → $target"
+  dim "Protected: $SYNC_PROTECTED_PATTERNS"
+  dim "Backup: $backup"
+}
+
+cmd_sync() {
+  local source=""
+  local target=""
+
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --from)
+        [ $# -lt 2 ] && red "Usage: codex-multi sync [--from <source>] <target>" && exit 1
+        source="$2"
+        shift 2
+        ;;
+      -*)
+        red "Unknown sync option: $1"
+        dim "Usage: codex-multi sync [--from <source>] <target>"
+        exit 1
+        ;;
+      *)
+        [ -n "$target" ] && red "Usage: codex-multi sync [--from <source>] <target>" && exit 1
+        target="$1"
+        shift
+        ;;
+    esac
+  done
+
+  [ -z "$target" ] && red "Usage: codex-multi sync [--from <source>] <target>" && exit 1
+  if [ -z "$source" ]; then
+    source=$(get_default)
+    [ -z "$source" ] && red "No default account. Run: codex-multi use <name> or pass --from <source>" && exit 1
+  fi
+
+  cmd_sync_context "$source" "$target"
+}
+
 cmd_rm() {
   local name="$1"
   local dir="$ACCOUNTS_DIR/$name"
@@ -320,6 +475,45 @@ cmd_use() {
 
   ln -s "$ACCOUNTS_DIR/$name" "$codex_home"
   green "Default: $name (codex + codex-multi)"
+}
+
+cmd_use_with_options() {
+  local sync_first=0
+  local name=""
+
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --sync)
+        sync_first=1
+        shift
+        ;;
+      -*)
+        red "Unknown use option: $1"
+        dim "Usage: codex-multi use [--sync] <name>"
+        exit 1
+        ;;
+      *)
+        [ -n "$name" ] && red "Usage: codex-multi use [--sync] <name>" && exit 1
+        name="$1"
+        shift
+        ;;
+    esac
+  done
+
+  [ -z "$name" ] && red "Usage: codex-multi use [--sync] <name>" && exit 1
+
+  if [ "$sync_first" = "1" ]; then
+    local source
+    source=$(get_default)
+    [ -z "$source" ] && red "No default account to sync from. Run: codex-multi use <name> first" && exit 1
+    if [ "$source" = "$name" ]; then
+      dim "Already using $name; sync skipped"
+    else
+      cmd_sync_context "$source" "$name"
+    fi
+  fi
+
+  cmd_use "$name"
 }
 
 cmd_status() {
@@ -685,8 +879,11 @@ case "$1" in
   ls|list)
     cmd_ls ;;
   use)
-    [ $# -lt 2 ] && red "Usage: codex-multi use <name>" && exit 1
-    cmd_use "$2" ;;
+    shift
+    cmd_use_with_options "$@" ;;
+  sync)
+    shift
+    cmd_sync "$@" ;;
   set)
     [ $# -lt 3 ] && red "Usage: codex-multi set lb <ip:port | http://host:port | https://host:port>" && exit 1
     cmd_set "$2" "$3" ;;
@@ -736,11 +933,12 @@ Commands:
   restore <file.tar.gz>   Restore all accounts/config from archive
   reauth [--lb] <name>    Re-login existing account (--lb to also import to codex-lb)
   set lb <addr>           Save codex-lb URL (supports ip:port, http://, https://)
+  sync [--from src] <dst> Copy context into another account without overwriting auth
   import <name> <file|->  Import auth.json from file or stdin
   export <name>           Print auth.json to stdout
   rm <name>               Remove an account
   ls                      List all accounts (* = default)
-  use <name>              Set default account
+  use [--sync] <name>     Set default account (optionally sync context first)
   status [name]           Check login status
   <name> [args...]        Run codex with specific account
   [args...]               Run codex with default account
@@ -756,6 +954,8 @@ Examples:
   codex-multi set lb 192.168.1.88:2455
   codex-multi restore /tmp/codex-multi.tar.gz
   codex-multi import work /tmp/auth.json
+  codex-multi sync work
+  codex-multi use --sync work
   codex-multi use personal
   codex-multi work exec "list files"
   codex-multi exec "list files"

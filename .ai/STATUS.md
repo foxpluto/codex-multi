@@ -1,7 +1,14 @@
 # Status
 
 ## Current State
-Project is stable. All core commands working, codex-lb integration is config-based (no hardcoded URLs).
+Project is stable. All core commands working, codex-lb integration is config-based (no hardcoded URLs). Local account context can be copied between accounts with `cm sync` or `cm use --sync` while preserving auth files.
+
+## Recent Work (2026-05-24)
+- Added `sync [--from src] <dst>` to copy Codex context from one local account to another.
+- Added `use --sync <name>` to sync from the current default account before switching the `~/.codex` symlink.
+- Protected `auth.json`, `auth.json.*`, and `installation_id` from sync overwrites.
+- Added target-account backups under `~/.codex-multi/backups/context-sync-*.tar.gz` before each sync.
+- Documented context sync in README, AGENTS, and decisions.
 
 ## Recent Work (2026-03-28)
 - Refactored: removed all hardcoded IPs, codex-lb URL now read from `~/.codex-multi/config`

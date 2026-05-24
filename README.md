@@ -32,6 +32,10 @@ cm ls
 # Switch default (switches for both codex-multi AND bare codex)
 cm use work
 
+# Copy current account context into another account without overwriting login
+cm sync work
+cm use --sync work
+
 # Run codex with default account
 codex exec "list files"
 cm exec "list files"
@@ -98,6 +102,8 @@ Each account gets its own directory under `~/.codex-multi/accounts/<name>/`.
 
 `cm use <name>` creates a symlink `~/.codex → ~/.codex-multi/accounts/<name>/`, so both `codex-multi` and bare `codex` use the same account. Original `~/.codex` is backed up to `~/.codex.bak` on first run.
 
+`cm sync <name>` copies the current default account context into another account before switching or as a standalone operation. It copies files such as `config.toml`, memories, skills, sessions, caches, and Codex SQLite state, but protects account identity files like `auth.json`, `auth.json.*`, and `installation_id`. `cm use --sync <name>` runs this sync from the current default account to `<name>` and then switches the `~/.codex` symlink. Run context sync between Codex sessions so SQLite files are not copied while Codex is actively writing them.
+
 `cm backup` archives the full `~/.codex-multi` state, including all accounts, `auth.json`, `config.toml`, and the default account marker. `cm restore` extracts that archive and recreates `~/.codex` for the restored default account when possible.
 
 ```
@@ -111,6 +117,12 @@ Each account gets its own directory under `~/.codex-multi/accounts/<name>/`.
         ├── auth.json
         └── config.toml
 ~/.codex → ~/.codex-multi/accounts/personal/  (symlink)
+```
+
+Context sync writes a target-account backup before copying:
+
+```
+~/.codex-multi/backups/context-sync-YYYYmmdd-HHMMSS-<account>.tar.gz
 ```
 
 ## Config
