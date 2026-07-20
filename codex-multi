@@ -297,13 +297,25 @@ cmd_sync_context() {
 
   mkdir -p "$MULTI_HOME/backups"
   local backup="$MULTI_HOME/backups/context-sync-$(date +%Y%m%d-%H%M%S)-$$-$target.tar.gz"
-  tar -czf "$backup" -C "$ACCOUNTS_DIR" "$target"
+  # Runtime IPC sockets cannot be archived by tar.  Build the backup with
+  # Python's tarfile instead: it skips unsupported entries (sockets included)
+  # while retaining the account's persistent files, directories, and links.
+  python3 - "$backup" "$ACCOUNTS_DIR" "$target" <<'PY'
+import os
+import tarfile
+import sys
+
+backup, accounts_dir, account = sys.argv[1:4]
+with tarfile.open(backup, "w:gz") as archive:
+    archive.add(os.path.join(accounts_dir, account), arcname=account)
+PY
   chmod 600 "$backup" 2>/dev/null || true
 
   python3 - "$source_dir" "$target_dir" "$SYNC_PROTECTED_PATTERNS" <<'PY'
 import fnmatch
 import os
 import shutil
+import stat
 import sys
 
 source_dir, target_dir, protected_raw = sys.argv[1:4]
@@ -332,6 +344,13 @@ def copy_entry(src, dst):
             os.unlink(dst)
         os.makedirs(dst, exist_ok=True)
         shutil.copystat(src, dst, follow_symlinks=False)
+        return
+
+    # Codex may create runtime IPC sockets under CODEX_HOME.  os.walk reports
+    # them alongside files, but they are neither persistent context nor
+    # copyable with shutil.copy2().  Ignore all non-regular entries so pipes,
+    # devices, and future runtime endpoints are handled safely as well.
+    if not stat.S_ISREG(os.lstat(src).st_mode):
         return
 
     if os.path.isdir(dst) and not os.path.islink(dst):
